@@ -1,6 +1,6 @@
 # MIPT'25 frontend course
 
-Запуск в контейнере:
+Запуск/перезапуск в контейнере:
 
 ```
 docker compose up --build
