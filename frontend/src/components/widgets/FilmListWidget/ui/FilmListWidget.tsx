@@ -1,6 +1,6 @@
 import { FilmCardEntity } from "@/components/entities/FilmCardEntity";
-import { filmCategories } from "@/store/filmCategories";
-import { FilmListItem } from "@/store/types/types";
+import { filmCategories } from "@/domain/film/const/filmCategories";
+import { FilmListItem } from "@/domain/film/types/types";
 import { Box, Checkbox, Flex, Grid, Heading, HStack } from "@chakra-ui/react";
 import { useEffect, useMemo, useState } from "react";
 import { fetchFilmsList } from "../api/fetchFilmsList";

@@ -1,4 +1,4 @@
-import { FilmListItem } from "@/store/types/types";
+import { FilmListItem } from "@/domain/film/types/types";
 
 export interface FilmCardEntityProps {
     data: FilmListItem;

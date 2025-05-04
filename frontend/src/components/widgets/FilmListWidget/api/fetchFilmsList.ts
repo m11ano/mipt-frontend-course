@@ -1,4 +1,4 @@
-import { FilmListItem } from "@/store/types/types";
+import { FilmListItem } from "@/domain/film/types/types";
 import axios, { AxiosError } from "axios";
 
 export async function fetchFilmsList(): Promise<FilmListItem[]> {

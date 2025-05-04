@@ -4,6 +4,7 @@ export interface FilmListItem {
     imageUrl: string;
     categories: number[];
     duration: number;
+    isFavorite: boolean;
 }
 
 export interface FilmItem {
@@ -13,4 +14,5 @@ export interface FilmItem {
     categories: number[];
     duration: number;
     description: string;
+    isFavorite: boolean;
 }

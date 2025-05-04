@@ -1,11 +1,15 @@
 import { Box, Button, Flex, Heading, Image, Span } from "@chakra-ui/react";
 import { FilmInfoWidgetProps } from "../model/types/types";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { GoClock, GoStar, GoStarFill } from "react-icons/go";
-import { filmCategories, IFilmCategory } from "@/store/filmCategories";
+import { filmCategories, IFilmCategory } from "@/domain/film/const/filmCategories";
 import RouterButton from "@/components/shared/RouterButton/RouterButton";
-import { FilmItem } from "@/store/types/types";
-import { fetchFilm } from "../api/fetchFilm";
+import { FilmItem } from "@/domain/film/types/types";
+import { fetchFilm } from "../../../../domain/film/api/fetchFilm";
+import { setFilmIsFavorite } from "@/domain/film/api/setFilmIsFavorite";
+import { AxiosError } from "axios";
+import { deleteFilm } from "../api/deleteFilm";
+import { useNavigate } from "react-router";
 
 const catMaps: Record<number, IFilmCategory> = {};
 
@@ -14,6 +18,8 @@ filmCategories.forEach((cat) => {
 });
 
 export default function FilmFavoriteListWidget({ id }: FilmInfoWidgetProps) {
+    const navigate = useNavigate();
+
     const [isFavorite, setIsFavorite] = useState(false);
 
     const [data, setData] = useState<FilmItem>();
@@ -21,14 +27,55 @@ export default function FilmFavoriteListWidget({ id }: FilmInfoWidgetProps) {
     const [isLoading, setIsLoading] = useState(true);
     const [isError, setIsError] = useState(false);
 
+    const abortRef = useRef<AbortController | null>(null);
+
+    const toggleFavorite = useCallback(async () => {
+        if (!data) {
+            return;
+        }
+        abortRef.current?.abort();
+
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        setIsFavorite((prev) => !prev);
+
+        try {
+            await setFilmIsFavorite(data.id, !isFavorite, abortRef.current.signal);
+        } catch (e: unknown) {
+            if (e instanceof AxiosError) {
+                if (e.code === "ERR_CANCELED") {
+                    return;
+                }
+            }
+            setIsFavorite((prev) => !prev);
+        } finally {
+            abortRef.current = null;
+        }
+    }, [data, isFavorite]);
+
     useEffect(() => {
         fetchFilm(id)
             .then((data) => {
                 setData(data);
+                setIsFavorite(data.isFavorite);
             })
             .catch(() => setIsError(true))
             .finally(() => setIsLoading(false));
     }, [id]);
+
+    const removeFilm = useCallback(async () => {
+        if (confirm("Вы действительно хотите удалить фильм?")) {
+            try {
+                await deleteFilm(id);
+                navigate("/");
+            } catch (e: unknown) {
+                if (e instanceof Error) {
+                    alert(e.message);
+                }
+            }
+        }
+    }, [id, navigate]);
 
     return (
         <>
@@ -54,10 +101,7 @@ export default function FilmFavoriteListWidget({ id }: FilmInfoWidgetProps) {
                                 </Heading>
                             </Box>
                             <Box>
-                                <button
-                                    onClick={() => setIsFavorite(!isFavorite)}
-                                    style={{ cursor: "pointer" }}
-                                >
+                                <button onClick={toggleFavorite} style={{ cursor: "pointer" }}>
                                     {!isFavorite ? (
                                         <GoStar color="#F9A62B" size={36} />
                                     ) : (
@@ -89,11 +133,7 @@ export default function FilmFavoriteListWidget({ id }: FilmInfoWidgetProps) {
                         <Box marginTop="20px" lineHeight={1.6} fontSize={16}>
                             {data.description}
                         </Box>
-                        <Flex
-                            marginTop="70px"
-                            justifyContent="flex-end"
-                            gap="30px"
-                        >
+                        <Flex marginTop="70px" justifyContent="flex-end" gap="30px">
                             <RouterButton
                                 to={`/film/${data.id}/edit`}
                                 variant="outline"
@@ -108,6 +148,7 @@ export default function FilmFavoriteListWidget({ id }: FilmInfoWidgetProps) {
                                 borderColor="#DEE2F2"
                                 color="#4A61DD"
                                 _hover={{ bgColor: "f0f3ff" }}
+                                onClick={removeFilm}
                             >
                                 Удалить
                             </Button>

@@ -2,6 +2,7 @@ package main
 
 import (
 	"mime/multipart"
+	"strings"
 
 	"github.com/disintegration/imaging"
 	"github.com/gofiber/fiber/v2"
@@ -23,9 +24,11 @@ type FilmItem struct {
 	Categories   []int  `json:"categories"`
 	Duration     int    `json:"duration"`
 	Description  string `json:"description"`
+	IsFavorite   bool   `json:"isFavorite"`
 }
 
-var serverUrl = GetenvWithDefault("DOMAIN_URI", "http://127.0.0.1") + GetenvWithDefault("HTTP_PORT", ":3001")
+var apiPrefix = GetenvWithDefault("API_PREFIX", "/api")
+var serverUrl = GetenvWithDefault("DOMAIN_URI", "http://127.0.0.1"+GetenvWithDefault("HTTP_PORT", ":3001")+apiPrefix)
 
 var (
 	films = []FilmItem{
@@ -58,15 +61,20 @@ func main() {
 		AllowHeaders: "*",
 	}))
 
+	apiGroup := app.Group(apiPrefix)
+
 	// Статика для загруженных файлов
-	app.Static("/uploads", "./uploads")
+	apiGroup.Static("/uploads", "./uploads")
 
 	// CRUD роуты
-	app.Get("/films", listFilms)
-	app.Get("/films/:id", getFilm)
-	app.Post("/films", createFilm)
-	app.Put("/films/:id", updateFilm)
-	app.Delete("/films/:id", deleteFilm)
+	apiGroup.Get("/films", listFilms)
+	app.Get("/films/favorites", listFilmsFavorites)
+	apiGroup.Get("/films/:id", getFilm)
+	apiGroup.Post("/films/:id/favorite", addFilmToFavorites)
+	apiGroup.Delete("/films/:id/favorite", deleteFilmToFavorites)
+	apiGroup.Post("/films", createFilm)
+	apiGroup.Put("/films/:id", updateFilm)
+	apiGroup.Delete("/films/:id", deleteFilm)
 
 	// Создаём папки если нет
 	_ = os.MkdirAll("uploads", os.ModePerm)
@@ -79,6 +87,16 @@ func listFilms(c *fiber.Ctx) error {
 	return c.JSON(films)
 }
 
+func listFilmsFavorites(c *fiber.Ctx) error {
+	filmsFavorites := []FilmItem{}
+	for _, film := range films {
+		if film.IsFavorite {
+			filmsFavorites = append(filmsFavorites, film)
+		}
+	}
+	return c.JSON(filmsFavorites)
+}
+
 func getFilm(c *fiber.Ctx) error {
 	id, _ := strconv.Atoi(c.Params("id"))
 	for _, film := range films {
@@ -89,42 +107,106 @@ func getFilm(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusNotFound)
 }
 
+func addFilmToFavorites(c *fiber.Ctx) error {
+	id, _ := strconv.Atoi(c.Params("id"))
+	for idx, film := range films {
+		if film.ID == id {
+			films[idx].IsFavorite = true
+			return c.SendStatus(fiber.StatusOK)
+		}
+	}
+	return c.SendStatus(fiber.StatusNotFound)
+}
+
+func deleteFilmToFavorites(c *fiber.Ctx) error {
+	id, _ := strconv.Atoi(c.Params("id"))
+	for idx, film := range films {
+		if film.ID == id {
+			films[idx].IsFavorite = false
+			return c.SendStatus(fiber.StatusOK)
+		}
+	}
+	return c.SendStatus(fiber.StatusNotFound)
+}
+
 func createFilm(c *fiber.Ctx) error {
 	form, err := c.MultipartForm()
 	if err != nil {
-		return err
+		return fiber.NewError(fiber.StatusBadRequest, "Невозможно прочитать форму")
 	}
 
-	name := form.Value["name"][0]
-	duration, _ := strconv.Atoi(form.Value["duration"][0])
+	// Валидация name
+	nameVals := form.Value["name"]
+	if len(nameVals) == 0 || strings.TrimSpace(nameVals[0]) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Поле name обязательно")
+	}
+	name := nameVals[0]
+
+	// Валидация description
+	descriptionVals := form.Value["description"]
+	if len(descriptionVals) == 0 || strings.TrimSpace(descriptionVals[0]) == "" {
+		return fiber.NewError(fiber.StatusBadRequest, "Поле description обязательно")
+	}
+	description := descriptionVals[0]
+
+	// Валидация duration
+	durationVals := form.Value["duration"]
+	if len(durationVals) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Поле duration обязательно")
+	}
+	duration, err := strconv.Atoi(durationVals[0])
+	if err != nil || duration <= 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Поле duration должно быть положительным числом")
+	}
+
+	// Валидация categories
+	categoriesVals := form.Value["categories[]"]
+	if len(categoriesVals) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Поле categories обязательно")
+	}
 	categories := []int{}
-	for _, catStr := range form.Value["categories"] {
-		cat, _ := strconv.Atoi(catStr)
+	for _, catStr := range categoriesVals {
+		cat, err := strconv.Atoi(catStr)
+		if err != nil {
+			return fiber.NewError(fiber.StatusBadRequest, "Некорректный формат категории")
+		}
 		categories = append(categories, cat)
 	}
 
-	fileHeader := form.File["image"][0]
+	// Валидация image
+	imageHeaders := form.File["file"]
+	if len(imageHeaders) == 0 {
+		return fiber.NewError(fiber.StatusBadRequest, "Файл file обязателен")
+	}
+	fileHeader := imageHeaders[0]
 
+	// Сохранение изображения
 	imgPath960, imgPath700, err := saveImage(fileHeader)
 	if err != nil {
-		return err
+		return fiber.NewError(fiber.StatusInternalServerError, "Ошибка при сохранении изображения")
 	}
 
+	// Создание и возврат фильма
 	film := FilmItem{
 		ID:           nextID,
 		Name:         name,
-		ImageUrl:     serverUrl + "/uploads/" + filepath.Base(imgPath960),
-		FullImageUrl: serverUrl + "/uploads/" + filepath.Base(imgPath700),
+		ImageUrl:     serverUrl + "/uploads/" + filepath.Base(imgPath700),
+		FullImageUrl: serverUrl + "/uploads/" + filepath.Base(imgPath960),
 		Categories:   categories,
 		Duration:     duration,
+		Description:  description,
 	}
 	nextID++
 	films = append(films, film)
-	return c.JSON(film)
+
+	return c.Status(fiber.StatusCreated).JSON(film)
 }
 
 func updateFilm(c *fiber.Ctx) error {
-	id, _ := strconv.Atoi(c.Params("id"))
+	id, err := strconv.Atoi(c.Params("id"))
+	if err != nil {
+		return fiber.NewError(fiber.StatusBadRequest, "Некорректный ID")
+	}
 
 	var film *FilmItem
 	for i := range films {
@@ -134,40 +216,66 @@ func updateFilm(c *fiber.Ctx) error {
 		}
 	}
 	if film == nil {
-		return c.SendStatus(fiber.StatusNotFound)
+		return fiber.NewError(fiber.StatusNotFound, "Фильм не найден")
 	}
 
 	form, err := c.MultipartForm()
 	if err != nil {
-		return err
+		return fiber.NewError(fiber.StatusBadRequest, "Невозможно прочитать форму")
 	}
 
-	if len(form.Value["name"]) > 0 {
-		film.Name = form.Value["name"][0]
+	// Обновление name (если передан)
+	if nameVals := form.Value["name"]; len(nameVals) > 0 {
+		name := strings.TrimSpace(nameVals[0])
+		if name == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Поле name не может быть пустым")
+		}
+		film.Name = name
 	}
-	if len(form.Value["duration"]) > 0 {
-		duration, _ := strconv.Atoi(form.Value["duration"][0])
+
+	// Обновление description
+	if descVals := form.Value["description"]; len(descVals) > 0 {
+		description := strings.TrimSpace(descVals[0])
+		if description == "" {
+			return fiber.NewError(fiber.StatusBadRequest, "Поле description не может быть пустым")
+		}
+		film.Description = description
+	}
+
+	// Обновление duration
+	if durationVals := form.Value["duration"]; len(durationVals) > 0 {
+		duration, err := strconv.Atoi(durationVals[0])
+		if err != nil || duration <= 0 {
+			return fiber.NewError(fiber.StatusBadRequest, "Поле duration должно быть положительным числом")
+		}
 		film.Duration = duration
 	}
-	if len(form.Value["categories"]) > 0 {
-		film.Categories = []int{}
-		for _, catStr := range form.Value["categories"] {
-			cat, _ := strconv.Atoi(catStr)
-			film.Categories = append(film.Categories, cat)
+
+	// Обновление categories
+	if categoriesVals := form.Value["categories[]"]; len(categoriesVals) > 0 {
+		categories := []int{}
+		for _, catStr := range categoriesVals {
+			cat, err := strconv.Atoi(catStr)
+			if err != nil {
+				return fiber.NewError(fiber.StatusBadRequest, "Некорректный формат категории")
+			}
+			categories = append(categories, cat)
 		}
+		film.Categories = categories
 	}
 
-	if len(form.File["image"]) > 0 {
-		fileHeader := form.File["image"][0]
+	// Обновление изображения
+	if imageHeaders := form.File["file"]; len(imageHeaders) > 0 {
+		fileHeader := imageHeaders[0]
 		imgPath960, imgPath700, err := saveImage(fileHeader)
 		if err != nil {
-			return err
+			return fiber.NewError(fiber.StatusInternalServerError, "Ошибка при сохранении изображения")
 		}
-		film.ImageUrl = serverUrl + "/uploads/" + filepath.Base(imgPath960)
-		film.FullImageUrl = serverUrl + "/uploads/" + filepath.Base(imgPath700)
+		film.ImageUrl = serverUrl + "/uploads/" + filepath.Base(imgPath700)
+		film.FullImageUrl = serverUrl + "/uploads/" + filepath.Base(imgPath960)
 	}
 
-	return c.JSON(film)
+	return c.Status(fiber.StatusOK).JSON(film)
 }
 
 func deleteFilm(c *fiber.Ctx) error {
@@ -197,17 +305,17 @@ func saveImage(fileHeader *multipart.FileHeader) (string, string, error) {
 	uid := uuid.New().String()
 
 	// 960x960
-	thumb := imaging.Fill(img, 960, 960, imaging.Center, imaging.Lanczos)
+	full := imaging.Fill(img, 960, 960, imaging.Center, imaging.Lanczos)
 	path960 := fmt.Sprintf("uploads/%s_960x960.jpg", uid)
-	err = imaging.Save(thumb, path960)
+	err = imaging.Save(full, path960)
 	if err != nil {
 		return "", "", err
 	}
 
 	// 700x384
-	full := imaging.Fill(img, 700, 384, imaging.Center, imaging.Lanczos)
+	thumb := imaging.Fill(img, 700, 384, imaging.Center, imaging.Lanczos)
 	path700 := fmt.Sprintf("uploads/%s_700x384.jpg", uid)
-	err = imaging.Save(full, path700)
+	err = imaging.Save(thumb, path700)
 	if err != nil {
 		return "", "", err
 	}
